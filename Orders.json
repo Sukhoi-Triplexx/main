@@ -1,0 +1,36 @@
+{
+    "orders": [
+        {
+            "client_name": "Санечек",
+            "amount": 320,
+            "items": [
+                {
+                    "name": "Котлета по-киевски",
+                    "price": 320
+                }
+            ]
+        },
+        {
+            "client_name": "Санечек",
+            "amount": 350,
+            "items": [
+                {
+                    "name": "Ризотто с грибами",
+                    "price": 350
+                }
+            ]
+        },
+        {
+            "client_name": "二百",
+            "items": [
+                {
+                    "name": "Борщ",
+                    "quantity": 2,
+                    "price": 180
+                }
+            ],
+            "status": "Оплата картой",
+            "amount": 0
+        }
+    ]
+}
