@@ -18,7 +18,7 @@ DATA_FILE = "Data.json"
 ORDERS = "Заказы.xlsx"
 MENU = "https://docs.google.com/spreadsheets/d/1VsiuMFOGDAz86qcXmBSc2mq5hXJXnqNPJIM09HooV2A/export?format=csv"
 ADDRESSES_FILE = "Addresses.json" 
-TOKEN = "7842071409:AAFOCPKFVnc-933_CSuMq2RU9ZRotHy8gpQ"
+TOKEN = "7814928433:AAGERulnnNOIvqbKp6IcQ-0yytP0szoSp9A"
 
 CHOOSE_ADDRESS, ENTER_NAME, BROADCAST_MESSAGE, ADD_ADDRESS = range(4)
 
