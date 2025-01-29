@@ -259,7 +259,7 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
                 [KeyboardButton("Комплексный обед №4")]
             ]
             keyboard.append([KeyboardButton("Корзина")])
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             await query.message.reply_text("Выберите обед:", reply_markup=reply_markup)
 
         except Exception as e:
