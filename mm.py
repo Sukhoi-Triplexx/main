@@ -567,7 +567,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await show_main_menu(update, context)
 
     elif data == "next_order":
-        await show_menu(update, context)  # Переход в меню выбора дня
+        await show_menu(update, context)
 
     elif data == "pay_now":
         await handle_payment(update, context)
@@ -823,6 +823,12 @@ async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         orders_df.to_excel(ORDERS, index=False)
 
         message_text = "Ваши заказы успешно оплачены!\n\n"
+
+        # Кнопка "Следующий заказ"
+        keyboard = [
+            [InlineKeyboardButton("Сделать следующий заказ", callback_data=" ")],
+            [InlineKeyboardButton("Вернуться в главное меню", callback_data=" ")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(message_text, reply_markup=reply_markup)
 
@@ -959,7 +965,7 @@ def main():
         application.add_handler(registration_handler)
         application.add_handler(broadcast_handler)
         application.add_handler(address_handler)
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))  # Используем handle_buttons напрямую
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))  
         application.add_handler(CallbackQueryHandler(handle_menu_and_lunch))
         application.add_handler(CallbackQueryHandler(handle_callback_query))
 
