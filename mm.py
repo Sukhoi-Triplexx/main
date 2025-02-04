@@ -18,7 +18,7 @@ DATA_FILE = "Data.json"
 ORDERS = "Заказы.xlsx"
 MENU = "https://docs.google.com/spreadsheets/d/1eEEHGwtSV2znQDGJcgGVEQ2PzNTLoDPOT-9vtyQCoQY/export?format=csv"
 ADDRESSES_FILE = "Addresses.json" 
-TOKEN = "7814928433:AAGERulnnNOIvqbKp6IcQ-0yytP0szoSp9A"
+TOKEN = "8154269678:AAE-CLwwQi6ZHW_nQvgoDERzG6lsqt37htY"
 
 CHOOSE_ADDRESS, ENTER_NAME, BROADCAST_MESSAGE, ADD_ADDRESS = range(4)
 
@@ -217,7 +217,10 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             day_name = days_of_week[day.weekday()]
             button_text = f"{day.strftime('%d.%m.%Y')} ({day_name})"
             keyboard.append([InlineKeyboardButton(button_text, callback_data=day.strftime('%d.%m.%Y'))])
-
+        next_day = today + timedelta(days=1)
+        next_day_name = days_of_week[next_day.weekday()]
+        button_text = f"{next_day.strftime('%d.%m.%Y')} ({next_day_name})"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=next_day.strftime('%d.%m.%Y'))])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("Выберите дату:", reply_markup=reply_markup)
     except Exception as e:
@@ -228,8 +231,6 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
     if isinstance(update, Update) and update.callback_query:
         query = update.callback_query
         selected_date_str = query.data
-
-        # Попробуем оба формата даты
         try:
             selected_date_full = datetime.strptime(selected_date_str, '%d.%m.%Y')
         except ValueError:
@@ -272,8 +273,6 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
                 menu_text += "\n"
 
             await query.message.reply_text(menu_text)
-
-            # Создаем клавиатуру с кнопками для выбора
             keyboard = []
             complex_lunches = daily_menu[daily_menu['Название'] == 'Комплексный обед']['Название'].unique().tolist()
             drinks = daily_menu[daily_menu['Название'] == 'Напиток']['Блюдо'].unique().tolist()
@@ -355,8 +354,6 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
             orders_df.to_excel(ORDERS, index=False)
 
             await update.message.reply_text(f"Ваш выбор ({message}) записан! Цена: {price} рублей.")
-
-            # Обновляем клавиатуру для выбора дополнительных блюд
             daily_menu = menu_data[menu_data['День недели'] == selected_day_name]
             complex_lunches = daily_menu[daily_menu['Название'] == 'Комплексный обед']['Название'].unique().tolist()
             drinks = daily_menu[daily_menu['Название'] == 'Напиток']['Блюдо'].unique().tolist()
@@ -374,47 +371,41 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
             if salads:
                 row = [KeyboardButton(option) for option in salads]
                 keyboard.append(row)
-
-            keyboard.append([KeyboardButton("Нет, спасибо")])
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-            await update.message.reply_text("Выберите ещё что-нибудь или нажмите 'Нет, спасибо':", reply_markup=reply_markup)
-
+            next_day = selected_date_full + timedelta(days=1)
+            next_day_str = next_day.strftime('%d.%m.%Y')
+            keyboard = [
+                [InlineKeyboardButton("Сделать следующий заказ", callback_data="next_order")],
+                [InlineKeyboardButton("Перейти в корзину", callback_data="show_cart")],
+                [InlineKeyboardButton("Вернуться в главное меню", callback_data="main_menu")]
+                ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Заказ успешно добавлен! Что дальше?", reply_markup=reply_markup)
         except Exception as e:
-            logger.error(f"Ошибка при записи заказа: {e}")
-            await update.message.reply_text(f"Ошибка при записи заказа: {e}")
-            return
+                    logger.error(f"Ошибка при записи заказа: {e}")
+                    await update.message.reply_text(f"Ошибка при записи заказа: {e}")
+                    return
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Проверяем роль пользователя
         if context.user_data.get("role") == "Администратор":
             await update.message.reply_text("У вас нет доступа к этой функции.")
             return
-
-        # Получаем выбранную дату из context.user_data
         selected_date = context.user_data.get("selected_date")
         if not selected_date:
             await update.message.reply_text("Выберите дату, чтобы увидеть заказы.")
             return
 
         try:
-            # Читаем файл с заказами
             orders_df = pd.read_excel(ORDERS)
         except FileNotFoundError:
             await update.message.reply_text("Файл с заказами не найден.")
             return
-
-        # Фильтруем заказы по выбранной дате и номеру телефона пользователя
         phone_number = context.user_data.get("phone_number")
         if not phone_number:
             await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота.")
             return
-
-        # Приводим номер телефона к строке и удаляем лишние символы (например, запятые)
         phone_number_clean = ''.join(filter(str.isdigit, phone_number))
         orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
-
-        # Фильтруем заказы по номеру телефона и выбранной дате
         user_orders = orders_df[
             (orders_df['Номер телефона'] == phone_number_clean) &
             (orders_df['Дата'] == selected_date)
@@ -423,26 +414,18 @@ async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_orders.empty:
             await update.message.reply_text(f"На {selected_date} у вас нет заказов.")
             return
-
-        # Формируем текст с заказами на выбранную дату
         orders_text = f"Ваши заказы на {selected_date}:\n\n"
         total_price = 0
 
         for index, row in user_orders.iterrows():
             orders_text += f"• {row['Обед']} - {row['Цена']} рублей\n"
             total_price += row['Цена']
-
-        # Добавляем общую сумму
         orders_text += f"\nИтого к оплате: {total_price} рублей."
-
-        # Создаем клавиатуру с кнопками "Оплатить" и "Отмена"
         keyboard = [
             [KeyboardButton("Оплатить")],
             [KeyboardButton("Отмена")]
         ]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-
-        # Отправляем сообщение с заказами и клавиатурой
         await update.message.reply_text(orders_text, reply_markup=reply_markup)
 
     except Exception as e:
@@ -552,16 +535,57 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif text == "Компот":
             await handle_drink(update, context, "Компот")
         elif text == "Оплатить":
-            await handle_payment(update, context)
+            if update.callback_query:
+                    pass
+            else:
+                    await handle_payment(update, context)
+
         elif text == "Отмена":
             await handle_cancel(update, context)
         elif text == "Нет, спасибо":
             await update.message.reply_text("Спасибо за ваш заказ! Если хотите что-то ещё, выберите из меню.")
+        elif text.startswith("Заказать на "):
+            next_day_str = text.replace("Заказать на ", "")
+            context.user_data["selected_date"] = next_day_str
+            await show_menu(update, context)
+        elif text == "Вернуться в главное меню":
+            await show_main_menu(update, context)
         else:
             await update.message.reply_text("Неизвестная команда. Пожалуйста, выберите действие из меню.")
     except Exception as e:
         logger.error(f"Ошибка при обработке кнопки: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    logger.info(f"Получен callback_query с данными: {data}")
+
+    if data == "main_menu":
+        await show_main_menu(update, context)
+
+    elif data == "next_order":
+        await show_menu(update, context)  # Переход в меню выбора дня
+
+    elif data == "pay_now":
+        await handle_payment(update, context)
+
+    elif data.startswith("order_"):
+        next_day_str = data.replace("order_", "")
+        try:
+            datetime.strptime(next_day_str, '%d.%m.%Y')
+            context.user_data["selected_date"] = next_day_str
+            await show_menu(update, context)
+        except ValueError:
+            await query.edit_message_text(f"Некорректный формат даты: {next_day_str}. Используйте формат ДД.ММ.ГГГГ.")
+
+    elif re.match(r'\d{2}\.\d{2}\.\d{4}', data):
+        await handle_payment(update, context)
+    
+    else:
+        await query.edit_message_text("Неизвестная команда. Пожалуйста, выберите действие из меню.")
 
 async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -577,8 +601,6 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except FileNotFoundError:
             await update.message.reply_text("Файл с заказами не найден.")
             return
-
-        # Фильтруем заказы по номеру телефона и выбранной дате
         phone_number_clean = ''.join(filter(str.isdigit, phone_number))
         orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
 
@@ -590,19 +612,13 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_orders.empty:
             await update.message.reply_text("Нет заказов для отмены.")
             return
-
-        # Удаляем заказы на выбранную дату
         orders_df = orders_df[
             ~((orders_df['Номер телефона'] == phone_number_clean) &
               (orders_df['Дата'] == selected_date))
         ]
-
-        # Сохраняем изменения в файл
         orders_df.to_excel(ORDERS, index=False)
 
         await update.message.reply_text("Ваши заказы успешно отменены!")
-
-        # Возвращаем пользователя в главное меню
         await show_main_menu(update, context)
 
     except Exception as e:
@@ -611,10 +627,7 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Определяем роль пользователя
         role = context.user_data.get("role", "Заказчик")
-
-        # Создаем клавиатуру в зависимости от роли
         if role == "Администратор":
             keyboard = [
                 ["Список заказов", "Сообщить всем"],
@@ -723,7 +736,7 @@ async def handle_salad(update: Update, context: ContextTypes.DEFAULT_TYPE, salad
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = update.message.text
-        await handle_buttons(update, context)  # Передаем только два аргумента
+        await handle_buttons(update, context)
     except Exception as e:
         logger.error(f"Ошибка при обработке текстового сообщения: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
@@ -789,7 +802,6 @@ async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Файл с заказами не найден.")
             return
 
-        # Фильтруем заказы по номеру телефона и выбранной дате
         phone_number_clean = ''.join(filter(str.isdigit, phone_number))
         orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
 
@@ -802,97 +814,68 @@ async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Нет заказов для оплаты.")
             return
 
-        # Обновляем статус заказов на "Оплачено"
+        # Обновляем статус оплаты
         orders_df.loc[
-            (orders_df['Номер телефона'] == phone_number_clean) &
+            (orders_df['Номер телефона'] == phone_number_clean) & 
             (orders_df['Дата'] == selected_date),
             'Статус оплаты'
         ] = 'Оплачено'
-
-        # Сохраняем изменения в файл
         orders_df.to_excel(ORDERS, index=False)
 
-        await update.message.reply_text("Ваши заказы успешно оплачены!")
+        message_text = "Ваши заказы успешно оплачены!\n\n"
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(message_text, reply_markup=reply_markup)
+
     except Exception as e:
         logger.error(f"Ошибка при обработке оплаты: {e}")
         await update.message.reply_text("Произошла ошибка при оплате. Пожалуйста, попробуйте снова.")
 
-# Обработчик для новой кнопки заказа
-async def new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    # Здесь начинаем процесс оформления нового заказа
-    # Это может быть переход в меню выбора продуктов, даты и так далее.
-    # Пример сообщения:
-    await query.edit_message_text("Начнем оформление нового заказа. Выберите дату и время!")
-    # Добавьте вашу логику для нового заказа здесь
-
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Получаем номер телефона из context.user_data
         phone_number = context.user_data.get("phone_number")
         if not phone_number:
             await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота.")
             return
 
-        # Получаем выбранную дату из context.user_data
-        selected_date = context.user_data.get("selected_date")
-        if not selected_date:
-            await update.message.reply_text("Выберите день, чтобы увидеть заказы.")
-            return
-
         try:
-            # Чтение файла с заказами
             orders_df = pd.read_excel(ORDERS)
         except FileNotFoundError:
             await update.message.reply_text("Заказов пока нет.")
             return
 
-        # Преобразуем selected_date в datetime для корректного сравнения
-        selected_date_dt = pd.to_datetime(selected_date, format='%d-%m-%Y')
-
-        # Преобразуем столбец 'Дата' в формат datetime, если он еще не в этом формате
-        if not pd.api.types.is_datetime64_any_dtype(orders_df['Дата']):
-            orders_df['Дата'] = pd.to_datetime(orders_df['Дата'], format='%d-%m-%Y')
-
-        # Приводим номер телефона в файле к строке и удаляем лишние символы (например, запятые)
+        phone_number_clean = ''.join(filter(str.isdigit, phone_number))
         orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
 
-        # Приводим номер телефона из context.user_data к тому же формату
-        phone_number_clean = ''.join(filter(str.isdigit, phone_number))
-
-        # Фильтруем заказы по номеру телефона и дате
         user_orders = orders_df[
-            (orders_df['Номер телефона'] == phone_number_clean) &
-            (orders_df['Дата'] == selected_date_dt)
+            (orders_df['Номер телефона'] == phone_number_clean)
         ]
 
         if user_orders.empty:
-            await update.message.reply_text(f"На {selected_date} у вас нет заказов.")
+            await update.message.reply_text("У вас пока нет заказов.")
             return
 
-        # Формируем сообщение с заказами
-        cart_message = f"Ваши заказы на {selected_date}:\n\n"
-        total_price = 0
+        # Группируем заказы по дате
+        orders_by_date = user_orders.groupby('Дата')
 
-        for index, row in user_orders.iterrows():
-            cart_message += f"• {row['Обед']} - {row['Цена']} рублей\n"
-            total_price += row['Цена']
+        cart_message = "Ваши заказы:\n\n"
+        for date, orders in orders_by_date:
+            cart_message += f"📅 *Заказы на {date}:*\n"
+            total_price = 0
+            for index, row in orders.iterrows():
+                cart_message += f"• {row['Обед']} - {row['Цена']} рублей\n"
+                total_price += row['Цена']
+            cart_message += f"*Итого к оплате: {total_price} рублей.*\n\n"
 
-        cart_message += f"\nИтого к оплате: {total_price} рублей."
-
-        # Создаем кнопки для оплаты
         keyboard = [
-            [
-                InlineKeyboardButton("Оплатить наличными", callback_data=f"pay_cash_{selected_date}"),
-                InlineKeyboardButton("Оплатить картой", callback_data=f"pay_card_{selected_date}")
-            ]
+            [InlineKeyboardButton("Оплатить", callback_data="pay_now")],
+            [InlineKeyboardButton("Сделать следующий заказ", callback_data="next_order")],
+            [InlineKeyboardButton("Вернуться в главное меню", callback_data="main_menu")]
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        
 
-        # Отправляем сообщение с заказами
-        await update.message.reply_text(cart_message, reply_markup=reply_markup)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(cart_message, reply_markup=reply_markup, parse_mode="Markdown")
+
     except Exception as e:
         logger.error(f"Ошибка при отображении корзины: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
@@ -978,6 +961,7 @@ def main():
         application.add_handler(address_handler)
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))  # Используем handle_buttons напрямую
         application.add_handler(CallbackQueryHandler(handle_menu_and_lunch))
+        application.add_handler(CallbackQueryHandler(handle_callback_query))
 
         application.run_polling()
     except Exception as e:
