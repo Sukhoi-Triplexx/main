@@ -1,3 +1,4 @@
+import re
 import os
 import json
 import logging
@@ -10,7 +11,7 @@ from telegram.ext import (
 )
 from datetime import datetime, time, timedelta
 
-logging.basicConfig(level=logging.INFO)
+#logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -19,6 +20,7 @@ ORDERS = "Заказы.xlsx"
 MENU = "https://docs.google.com/spreadsheets/d/1eEEHGwtSV2znQDGJcgGVEQ2PzNTLoDPOT-9vtyQCoQY/export?format=csv"
 ADDRESSES_FILE = "Addresses.json" 
 TOKEN = "8154269678:AAE-CLwwQi6ZHW_nQvgoDERzG6lsqt37htY"
+ORDERS_JSON = "orders.json"
 
 CHOOSE_ADDRESS, ENTER_NAME, BROADCAST_MESSAGE, ADD_ADDRESS = range(4)
 
@@ -146,7 +148,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
 def get_role_keyboard(role):
     if role == "Администратор":
-        return [["Список заказов", "Сообщить всем"], ["Добавить адрес доставки", "Импорт chat_id"]]
+        return [["Список заказов", "Сообщить всем"], ["Добавить адрес доставки", "Выгрузка заказов"]]
     elif role == "Заказчик":
         return [["Сделать заказ", "Корзина"]]  
 
@@ -162,7 +164,7 @@ async def choose_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         context.user_data["address"] = address
-        await query.edit_message_text(f"Адрес доставки выбран: {address}. Введите ваше имя:")
+        await query.edit_message_text(f"Адрес доставки выбран: {address}. Введите ваше имя и фамилию:")
         return ENTER_NAME
     except Exception as e:
         logger.error(f"Error in choose_address: {e}")
@@ -204,42 +206,28 @@ async def enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        today = datetime.now()
-        days = [today + timedelta(days=i) for i in range(7)]
-        cutoff_time = time(10, 0)  # Время, после которого нельзя заказывать на сегодня
+    today = datetime.now()
+    days = [today + timedelta(days=i) for i in range(7)]
+    cutoff_time = time(10, 00) #ТУТ МЕНЯТЬ ВРЕМЯ 10 - ЧАСЫ; 00 - МИНУТЫ!!!!!!!!!!!!!!!!!!!!!!!!!
 
-        keyboard = []
-        days_of_week = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-        for day in days:
-            if day.date() == today.date() and datetime.now().time() >= cutoff_time:
-                continue
-            day_name = days_of_week[day.weekday()]
-            button_text = f"{day.strftime('%d.%m.%Y')} ({day_name})"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=day.strftime('%d.%m.%Y'))])
-        next_day = today + timedelta(days=1)
-        next_day_name = days_of_week[next_day.weekday()]
-        button_text = f"{next_day.strftime('%d.%m.%Y')} ({next_day_name})"
-        keyboard.append([InlineKeyboardButton(button_text, callback_data=next_day.strftime('%d.%m.%Y'))])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Выберите дату:", reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"Ошибка в функции show_menu: {e}")
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+    keyboard = []
+    days_of_week = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    for day in days:
+        if day.date() == today.date() and datetime.now().time() >= cutoff_time:
+            continue
+        day_name = days_of_week[day.weekday()]
+        button_text = f"{day.strftime('%d.%m.%Y')} ({day_name})"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=day.strftime('%d.%m.%Y'))])
+
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выберите дату:", reply_markup=reply_markup)
 
 async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if isinstance(update, Update) and update.callback_query:
         query = update.callback_query
         selected_date_str = query.data
-        try:
-            selected_date_full = datetime.strptime(selected_date_str, '%d.%m.%Y')
-        except ValueError:
-            try:
-                selected_date_full = datetime.strptime(selected_date_str, '%d-%m-%Y')
-            except ValueError as e:
-                await query.message.reply_text(f"Некорректный формат даты: {selected_date_str}. Используйте формат ДД.ММ.ГГГГ или ДД-ММ-ГГГГ.")
-                return
-
+        selected_date_full = datetime.strptime(selected_date_str, '%d.%m.%Y')
         days_of_week = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
         day_index = selected_date_full.weekday()
         selected_day_name = days_of_week[day_index]
@@ -256,7 +244,6 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
             week_number = selected_date_full.isocalendar()[1] % 2  
 
             daily_menu = menu_data[(menu_data['День недели'] == selected_day_name) & (menu_data['Неделя'] == week_number)]
-            print(daily_menu)
 
             if daily_menu.empty:
                 await query.message.reply_text("К сожалению, на эту дату нет меню.")
@@ -273,11 +260,12 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
                 menu_text += "\n"
 
             await query.message.reply_text(menu_text)
-            keyboard = []
+
             complex_lunches = daily_menu[daily_menu['Название'] == 'Комплексный обед']['Название'].unique().tolist()
             drinks = daily_menu[daily_menu['Название'] == 'Напиток']['Блюдо'].unique().tolist()
             salads = daily_menu[daily_menu['Название'] == 'Салат']['Блюдо'].unique().tolist()
 
+            keyboard = []
             if complex_lunches:
                 row = [KeyboardButton(option) for option in complex_lunches]
                 keyboard.append(row)
@@ -290,12 +278,12 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
                 row = [KeyboardButton(option) for option in salads]
                 keyboard.append(row)
 
+            keyboard.append([KeyboardButton("Назад")])
             keyboard.append([KeyboardButton("Корзина")])
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
             await query.message.reply_text("Выберите обед:", reply_markup=reply_markup)
 
         except Exception as e:
-            logger.error(f"Ошибка при загрузке меню: {e}")
             await query.message.reply_text(f"Ошибка при загрузке меню: {e}")
             return
 
@@ -333,27 +321,50 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
                     await update.message.reply_text(f"Цена для {message} не найдена в меню.")
                     return
 
+
             try:
-                orders_df = pd.read_excel(ORDERS)
+                with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                    try:
+                        orders = json.load(f)
+
+                        if not isinstance(orders, list):
+                            orders = []
+                    except json.JSONDecodeError:
+
+                        orders = []
             except FileNotFoundError:
-                orders_df = pd.DataFrame(columns=['Номер телефона', 'Дата', 'День недели', 'Обед', 'Цена', 'Статус оплаты']) 
 
-            selected_date_full = datetime.strptime(selected_date, '%d.%m.%Y')
-            days_of_week = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-            day_name = days_of_week[selected_date_full.weekday()]
+                orders = []
 
-            new_order = pd.DataFrame({
-                'Номер телефона': [phone],
-                'Дата': [selected_date],
-                'День недели': [selected_day_name],
-                'Обед': [message],
-                'Цена': [price],
-                'Статус оплаты': ['Не оплачено']
-            })
-            orders_df = pd.concat([orders_df, new_order], ignore_index=True)
-            orders_df.to_excel(ORDERS, index=False)
+
+            new_order = {
+                "Номер телефона": phone,
+                "Дата": selected_date,
+                "День недели": selected_day_name,
+                "Обед": message,
+                "Цена": int(price),
+                "Статус оплаты": "Не оплачено"
+                "Имя заказчика"
+            }
+            try:
+                with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                    try:
+                        orders = json.load(f)
+                        if not isinstance(orders, list):
+                            orders = []
+                    except json.JSONDecodeError:
+                        orders = []
+            except FileNotFoundError:
+                orders = []
+
+            orders.append(new_order)
+
+            with open(ORDERS_JSON, 'w', encoding='utf-8') as f:
+                json.dump(orders, f, ensure_ascii=False, indent=4)
+
 
             await update.message.reply_text(f"Ваш выбор ({message}) записан! Цена: {price} рублей.")
+
             daily_menu = menu_data[menu_data['День недели'] == selected_day_name]
             complex_lunches = daily_menu[daily_menu['Название'] == 'Комплексный обед']['Название'].unique().tolist()
             drinks = daily_menu[daily_menu['Название'] == 'Напиток']['Блюдо'].unique().tolist()
@@ -371,66 +382,67 @@ async def handle_menu_and_lunch(update: Update, context: ContextTypes.DEFAULT_TY
             if salads:
                 row = [KeyboardButton(option) for option in salads]
                 keyboard.append(row)
-            next_day = selected_date_full + timedelta(days=1)
-            next_day_str = next_day.strftime('%d.%m.%Y')
-            keyboard = [
-                [InlineKeyboardButton("Сделать следующий заказ", callback_data="next_order")],
-                [InlineKeyboardButton("Перейти в корзину", callback_data="show_cart")],
-                [InlineKeyboardButton("Вернуться в главное меню", callback_data="main_menu")]
-                ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text("Заказ успешно добавлен! Что дальше?", reply_markup=reply_markup)
+
+            keyboard.append([KeyboardButton("Нет, спасибо")])
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+            await update.message.reply_text("Выберите ещё что-нибудь или нажмите 'Нет, спасибо':", reply_markup=reply_markup)
+
         except Exception as e:
-                    logger.error(f"Ошибка при записи заказа: {e}")
-                    await update.message.reply_text(f"Ошибка при записи заказа: {e}")
-                    return
+            await update.message.reply_text(f"Ошибка при записи заказа: {e}")
+            return
+
+def move_orders_to_excel(phone, orders_json_path="orders.json", orders_excel_path="Заказы.xlsx"):
+    try:
+        with open(orders_json_path, "r", encoding="utf-8") as f:
+            orders = json.load(f)
+
+        user_orders = [order for order in orders if order.get("Номер телефона") == phone]
+        if not user_orders:
+            return False
+
+        try:
+            orders_df = pd.read_excel(orders_excel_path)
+        except FileNotFoundError:
+            orders_df = pd.DataFrame(columns=["Номер телефона", "Дата", "День недели", "Обед", "Цена", "Статус оплаты"])
+
+        new_orders_df = pd.DataFrame(user_orders)
+        orders_df = pd.concat([orders_df, new_orders_df], ignore_index=True)
+
+        orders_df.to_excel(orders_excel_path, index=False)
+
+
+        remaining_orders = [order for order in orders if order.get("Номер телефона") != phone]
+        with open(orders_json_path, "w", encoding="utf-8") as f:
+            json.dump(remaining_orders, f, ensure_ascii=False, indent=4)
+
+        return True
+
+    except Exception as e:
+        return False
 
 async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if context.user_data.get("role") == "Администратор":
-            await update.message.reply_text("У вас нет доступа к этой функции.")
+        orders_df = pd.read_excel(ORDERS, engine='openpyxl')
+        
+        if orders_df.empty:
+            await update.message.reply_text("Заказов пока нет.")
             return
-        selected_date = context.user_data.get("selected_date")
-        if not selected_date:
-            await update.message.reply_text("Выберите дату, чтобы увидеть заказы.")
-            return
-
-        try:
-            orders_df = pd.read_excel(ORDERS)
-        except FileNotFoundError:
-            await update.message.reply_text("Файл с заказами не найден.")
-            return
-        phone_number = context.user_data.get("phone_number")
-        if not phone_number:
-            await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота.")
-            return
-        phone_number_clean = ''.join(filter(str.isdigit, phone_number))
-        orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
-        user_orders = orders_df[
-            (orders_df['Номер телефона'] == phone_number_clean) &
-            (orders_df['Дата'] == selected_date)
-        ]
-
-        if user_orders.empty:
-            await update.message.reply_text(f"На {selected_date} у вас нет заказов.")
-            return
-        orders_text = f"Ваши заказы на {selected_date}:\n\n"
-        total_price = 0
-
-        for index, row in user_orders.iterrows():
-            orders_text += f"• {row['Обед']} - {row['Цена']} рублей\n"
-            total_price += row['Цена']
-        orders_text += f"\nИтого к оплате: {total_price} рублей."
-        keyboard = [
-            [KeyboardButton("Оплатить")],
-            [KeyboardButton("Отмена")]
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-        await update.message.reply_text(orders_text, reply_markup=reply_markup)
-
+        
+        orders_text = "Список всех заказов:\n\n"
+        for index, row in orders_df.iterrows():
+            orders_text += (
+                f" *Дата*: {row['Дата']} ({row['День недели']})\n"
+                f" *Обед*: {row['Обед']}\n"
+                f" *Цена*: {row['Цена']} рублей\n"
+            )
+        
+        await update.message.reply_text(orders_text, parse_mode="Markdown")
+    
+    except FileNotFoundError:
+        await update.message.reply_text("Файл с заказами не найден.")
+    
     except Exception as e:
-        logger.error(f"Ошибка при отображении заказов: {e}")
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+        await update.message.reply_text(f"Ошибка чтения файла заказов: {e}")
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -444,6 +456,27 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in menu: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+
+def move_orders_to_excel(phone, orders_json_path="orders.json", orders_excel_path="Заказы.xlsx"):
+    try:
+        with open(orders_json_path, "r", encoding="utf-8") as f:
+            orders = json.load(f)
+        user_orders = [order for order in orders if order.get("Номер телефона") == phone]
+        if not user_orders:
+            return False
+        try:
+            orders_df = pd.read_excel(orders_excel_path)
+        except FileNotFoundError:
+            orders_df = pd.DataFrame(columns=["Номер телефона", "Дата", "День недели", "Обед", "Цена", "Статус оплаты"])
+        new_orders_df = pd.DataFrame(user_orders)
+        orders_df = pd.concat([orders_df, new_orders_df], ignore_index=True)
+        orders_df.to_excel(orders_excel_path, index=False)
+        remaining_orders = [order for order in orders if order.get("Номер телефона") != phone]
+        with open(orders_json_path, "w", encoding="utf-8") as f:
+            json.dump(remaining_orders, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        return False
 
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     role = context.user_data.get("role")
@@ -507,7 +540,8 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == "Сделать заказ":
             await show_menu(update, context)
         elif text == "Корзина":
-            await show_orders(update, context)
+            #await show_orders(update, context)
+            await show_cart(update, context)
         elif text == "Список заказов":
             await show_all_orders(update, context)
         elif text == "Сообщить всем":
@@ -518,30 +552,21 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await import_chat_ids(update, context)
         elif text == "Комплексный обед":
             await handle_complex_lunch(update, context, "Комплексный обед")
-        elif text == "Комплексный обед №2":
-            await handle_complex_lunch(update, context, "Комплексный обед №2")
-        elif text == "Комплексный обед №3":
-            await handle_complex_lunch(update, context, "Комплексный обед №3")
-        elif text == "Комплексный обед №4":
-            await handle_complex_lunch(update, context, "Комплексный обед №4")
-        elif text == "Чай":
-            await handle_drink(update, context, "Чай")
-        elif text == "Кофе":
-            await handle_drink(update, context, "Кофе")
-        elif text == "Цезарь":
-            await handle_salad(update, context, "Цезарь")
-        elif text == "Салат Греческий":
-            await handle_salad(update, context, "Салат Греческий")
+        elif text == "Морс":
+            await handle_drink(update, context, "Морс")
         elif text == "Компот":
             await handle_drink(update, context, "Компот")
+        elif text == "Цезарь с сёмгой":
+            await handle_salad(update, context, "Цезарь с сёмгой")
+        elif text == "Цезарь с курицей":
+            await handle_salad(update, context, "Цезарь с курицей")
         elif text == "Оплатить":
             if update.callback_query:
                     pass
             else:
-                    await handle_payment(update, context)
-
-        elif text == "Отмена":
-            await handle_cancel(update, context)
+                    await handle_payment_selection(update, context)
+        elif text == "Назад":
+            await show_menu(update, context)
         elif text == "Нет, спасибо":
             await update.message.reply_text("Спасибо за ваш заказ! Если хотите что-то ещё, выберите из меню.")
         elif text.startswith("Заказать на "):
@@ -550,11 +575,54 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_menu(update, context)
         elif text == "Вернуться в главное меню":
             await show_main_menu(update, context)
+        elif text == "Очистить корзину":
+            await clear_cart(update, context)
+        elif text == "Выгрузка заказов":
+            await import_excel(update, context)
         else:
             await update.message.reply_text("Неизвестная команда. Пожалуйста, выберите действие из меню.")
     except Exception as e:
         logger.error(f"Ошибка при обработке кнопки: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+
+async def import_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    role = context.user_data.get("role")
+    if role != "Администратор":
+        await update.message.reply_text("У вас нет доступа к этой команде")
+        return
+    await update.message.reply_document(ORDERS)
+
+
+async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        phone_number = context.user_data.get("phone_number")
+        if not phone_number:
+            await update.message.reply_text("Ваш номер телефона не зарегестрирован")
+            return
+        try:
+            with open(ORDERS_JSON, "r", encoding="utf-8") as f:
+                orders = json.load(f)
+        except FileNotFoundError:
+            await update.message.reply_text("Заказов нету")
+            return
+        except json.JSONDecodeError:
+            await update.message.reply_text("Ошибка доступа при обращении к файлу")
+            return
+        
+        initial_count = len(orders)
+        orders = [order for order in orders if order.get("Номер телефона") != phone_number]
+
+        with open(ORDERS_JSON, "w", encoding="utf-8") as f:
+            json.dump(orders, f, ensure_ascii=False, indent=4)
+
+        if len(orders) < initial_count:
+            await update.message.reply_text("Корзина успешно очищена")
+        else:
+            await update.message.reply_text("Корзина пуста")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при очистке корзины: {e}")
+        await update.message.reply_text("Ошибка при очистке корзины")
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -570,7 +638,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await show_menu(update, context)
 
     elif data == "pay_now":
-        await handle_payment(update, context)
+        await handle_payment_selection(update, context)
 
     elif data.startswith("order_"):
         next_day_str = data.replace("order_", "")
@@ -582,7 +650,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(f"Некорректный формат даты: {next_day_str}. Используйте формат ДД.ММ.ГГГГ.")
 
     elif re.match(r'\d{2}\.\d{2}\.\d{4}', data):
-        await handle_payment(update, context)
+        try:
+            datetime.strptime(data, '%d.%m.%Y')
+            context.user_data["selected_date"] = data
+            await handle_payment_selection(update, context)
+        except ValueError:
+            await query.edit_message_text(f"Некорректный формат даты: {data}. Используйте формат ДД.ММ.ГГГГ.")
     
     else:
         await query.edit_message_text("Неизвестная команда. Пожалуйста, выберите действие из меню.")
@@ -645,94 +718,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при отображении главного меню: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
 
-async def handle_drink(update: Update, context: ContextTypes.DEFAULT_TYPE, drink_name: str):
-    try:
-        phone = context.user_data.get("phone_number")
-        if phone is None:
-            await update.message.reply_text("Ваш номер телефона не зарегистрирован, перезапустите бота!")
-            return
-
-        selected_date = context.user_data.get("selected_date")
-        if selected_date is None:
-            await update.message.reply_text("Выберите дату, прежде чем заказывать напиток.")
-            return
-
-        try:
-            menu_data = pd.read_csv(MENU)
-            drink_prices = dict(zip(menu_data['Блюдо'], menu_data['Цена']))
-
-            price = drink_prices.get(drink_name)
-            if price is None:
-                await update.message.reply_text(f"Цена для {drink_name} не найдена в меню.")
-                return
-
-            try:
-                orders_df = pd.read_excel(ORDERS)
-            except FileNotFoundError:
-                orders_df = pd.DataFrame(columns=['Номер телефона', 'Дата', 'Обед', 'Цена', 'Статус оплаты'])
-
-            new_order = pd.DataFrame({
-                'Номер телефона': [phone],
-                'Дата': [selected_date],
-                'Обед': [drink_name],
-                'Цена': [price],
-                'Статус оплаты': ['Не оплачено']
-            })
-            orders_df = pd.concat([orders_df, new_order], ignore_index=True)
-            orders_df.to_excel(ORDERS, index=False)
-            logger.info(f"Заказ сохранён: {drink_name}, цена: {price}, дата: {selected_date}, телефон: {phone}")
-            await update.message.reply_text(f"Ваш выбор ({drink_name}) записан! Цена: {price} рублей.")
-        except Exception as e:
-            logger.error(f"Ошибка записи в файл: {e}")
-            await update.message.reply_text(f"Ошибка записи в файл: {e}")
-    except Exception as e:
-        logger.error(f"Ошибка при обработке напитка: {e}")
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
-
-async def handle_salad(update: Update, context: ContextTypes.DEFAULT_TYPE, salad_name: str):
-    try:
-        phone = context.user_data.get("phone_number")
-        if phone is None:
-            await update.message.reply_text("Ваш номер телефона не зарегистрирован, перезапустите бота!")
-            return
-
-        selected_date = context.user_data.get("selected_date")
-        if selected_date is None:
-            await update.message.reply_text("Выберите дату, прежде чем заказывать салат.")
-            return
-
-        try:
-            menu_data = pd.read_csv(MENU)
-            salad_prices = dict(zip(menu_data['Блюдо'], menu_data['Цена']))
-
-            price = salad_prices.get(salad_name)
-            if price is None:
-                await update.message.reply_text(f"Цена для {salad_name} не найдена в меню.")
-                return
-
-            try:
-                orders_df = pd.read_excel(ORDERS)
-            except FileNotFoundError:
-                orders_df = pd.DataFrame(columns=['Номер телефона', 'Дата', 'Обед', 'Цена', 'Статус оплаты'])
-
-            new_order = pd.DataFrame({
-                'Номер телефона': [phone],
-                'Дата': [selected_date],
-                'Обед': [salad_name],
-                'Цена': [price],
-                'Статус оплаты': ['Не оплачено']
-            })
-            orders_df = pd.concat([orders_df, new_order], ignore_index=True)
-            orders_df.to_excel(ORDERS, index=False)
-            logger.info(f"Заказ сохранён: {salad_name}, цена: {price}, дата: {selected_date}, телефон: {phone}")
-            await update.message.reply_text(f"Ваш выбор ({salad_name}) записан! Цена: {price} рублей.")
-        except Exception as e:
-            logger.error(f"Ошибка записи в файл: {e}")
-            await update.message.reply_text(f"Ошибка записи в файл: {e}")
-    except Exception as e:
-        logger.error(f"Ошибка при обработке: {e}")
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
-
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = update.message.text
@@ -740,6 +725,136 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка при обработке текстового сообщения: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+
+async def handle_drink(update: Update, context: ContextTypes.DEFAULT_TYPE, drink_name: str):
+    try:
+            phone = context.user_data.get("phone_number")
+            if phone is None:
+                await update.message.reply_text("Ваш номер телефона не зарегистрирован, перезапустите бота!")
+                return
+            selected_date = context.user_data.get("selected_date")
+            if selected_date is None:
+                await update.message.reply_text("Выберите дату, прежде чем заказывать обед.")
+                return
+            selected_day_name = context.user_data.get("selected_day_name")
+            try:
+                menu_data = pd.read_csv(MENU)
+                drink_price = dict(zip(menu_data['Блюдо'], menu_data['Цена']))
+
+                price = drink_price.get(drink_name)
+                if price is None:
+                    await update.message.reply_text(f"Цена для {drink_name} не найдена в меню.")
+                    return
+                try:
+                    with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                        try:
+                            orders = json.load(f)
+
+                            if not isinstance(orders, list):
+                                orders = []
+                        except json.JSONDecodeError:
+
+                            orders = []
+                except FileNotFoundError:
+
+                    orders = []
+
+                new_order = {
+                "Номер телефона": phone,
+                "Дата": selected_date,
+                "День недели": selected_day_name,
+                "Обед": drink_name,
+                "Цена": int(price),
+                "Статус оплаты": "Не оплачено"
+                }
+                try:
+                    with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                        try:
+                            orders = json.load(f)
+                            if not isinstance(orders, list):
+                                orders = []
+                        except json.JSONDecodeError:
+                            orders = []
+                except FileNotFoundError:
+                    orders = []
+
+                orders.append(new_order)
+
+                with open(ORDERS_JSON, 'w', encoding='utf-8') as f:
+                    json.dump(orders, f, ensure_ascii=False, indent=4)
+                logger.info(f"Заказ сохранён: {drink_name}, цена: {price}, дата: {selected_date}, телефон: {phone}")
+                await update.message.reply_text(f"Ваш выбор ({drink_name}) записан! Цена: {price} рублей.")
+            except Exception as e:
+                logger.error(f"Ошибка записи в файл: {e}")
+                await update.message.reply_text(f"Ошибка записи в файл: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке комплексного обеда: {e}")
+        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+
+async def handle_salad(update: Update, context: ContextTypes.DEFAULT_TYPE, salad_name: str):
+    try:
+            phone = context.user_data.get("phone_number")
+            if phone is None:
+                await update.message.reply_text("Ваш номер телефона не зарегистрирован, перезапустите бота!")
+                return
+            selected_date = context.user_data.get("selected_date")
+            if selected_date is None:
+                await update.message.reply_text("Выберите дату, прежде чем заказывать обед.")
+                return
+            selected_day_name = context.user_data.get("selected_day_name")
+            try:
+                menu_data = pd.read_csv(MENU)
+                salad_price = dict(zip(menu_data['Блюдо'], menu_data['Цена']))
+
+                price = salad_price.get(salad_name)
+                if price is None:
+                    await update.message.reply_text(f"Цена для {salad_name} не найдена в меню.")
+                    return
+                try:
+                    with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                        try:
+                            orders = json.load(f)
+
+                            if not isinstance(orders, list):
+                                orders = []
+                        except json.JSONDecodeError:
+
+                            orders = []
+                except FileNotFoundError:
+
+                    orders = []
+
+                new_order = {
+                "Номер телефона": phone,
+                "Дата": selected_date,
+                "День недели": selected_day_name,
+                "Обед": salad_name,
+                "Цена": int(price),
+                "Статус оплаты": "Не оплачено"
+                }
+                try:
+                    with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                        try:
+                            orders = json.load(f)
+                            if not isinstance(orders, list):
+                                orders = []
+                        except json.JSONDecodeError:
+                            orders = []
+                except FileNotFoundError:
+                    orders = []
+
+                orders.append(new_order)
+
+                with open(ORDERS_JSON, 'w', encoding='utf-8') as f:
+                    json.dump(orders, f, ensure_ascii=False, indent=4)
+                logger.info(f"Заказ сохранён: {salad_name}, цена: {price}, дата: {selected_date}, телефон: {phone}")
+                await update.message.reply_text(f"Ваш выбор ({salad_name}) записан! Цена: {price} рублей.")
+            except Exception as e:
+                logger.error(f"Ошибка записи в файл: {e}")
+                await update.message.reply_text(f"Ошибка записи в файл: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при обработке комплексного обеда: {e}")
+    await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
 
 async def handle_complex_lunch(update: Update, context: ContextTypes.DEFAULT_TYPE, lunch_name: str):
     try:
@@ -752,7 +867,7 @@ async def handle_complex_lunch(update: Update, context: ContextTypes.DEFAULT_TYP
         if selected_date is None:
             await update.message.reply_text("Выберите дату, прежде чем заказывать обед.")
             return
-
+        selected_day_name = context.user_data.get("selected_day_name")
         try:
             menu_data = pd.read_csv(MENU)
             lunch_prices = dict(zip(menu_data['Название'], menu_data['Цена']))
@@ -761,21 +876,44 @@ async def handle_complex_lunch(update: Update, context: ContextTypes.DEFAULT_TYP
             if price is None:
                 await update.message.reply_text(f"Цена для {lunch_name} не найдена в меню.")
                 return
-
             try:
-                orders_df = pd.read_excel(ORDERS)
-            except FileNotFoundError:
-                orders_df = pd.DataFrame(columns=['Номер телефона', 'Дата', 'Обед', 'Цена', 'Статус оплаты'])
+                with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                    try:
+                        orders = json.load(f)
 
-            new_order = pd.DataFrame({
-                'Номер телефона': [phone],
-                'Дата': [selected_date],
-                'Обед': [lunch_name],
-                'Цена': [price],
-                'Статус оплаты': ['Не оплачено']
-            })
-            orders_df = pd.concat([orders_df, new_order], ignore_index=True)
-            orders_df.to_excel(ORDERS, index=False)
+                        if not isinstance(orders, list):
+                            orders = []
+                    except json.JSONDecodeError:
+
+                        orders = []
+            except FileNotFoundError:
+
+                orders = []
+
+
+            new_order = {
+            "Номер телефона": phone,
+            "Дата": selected_date,
+            "День недели": selected_day_name,
+            "Обед": lunch_name,
+            "Цена": int(price),
+            "Статус оплаты": "Не оплачено"
+            }
+            try:
+                with open(ORDERS_JSON, 'r', encoding='utf-8') as f:
+                    try:
+                        orders = json.load(f)
+                        if not isinstance(orders, list):
+                            orders = []
+                    except json.JSONDecodeError:
+                        orders = []
+            except FileNotFoundError:
+                orders = []
+
+            orders.append(new_order)
+
+            with open(ORDERS_JSON, 'w', encoding='utf-8') as f:
+                json.dump(orders, f, ensure_ascii=False, indent=4)
             logger.info(f"Заказ сохранён: {lunch_name}, цена: {price}, дата: {selected_date}, телефон: {phone}")
             await update.message.reply_text(f"Ваш выбор ({lunch_name}) записан! Цена: {price} рублей.")
         except Exception as e:
@@ -785,106 +923,72 @@ async def handle_complex_lunch(update: Update, context: ContextTypes.DEFAULT_TYP
         logger.error(f"Ошибка при обработке комплексного обеда: {e}")
         await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-async def handle_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        selected_date = context.user_data.get("selected_date")
-        phone_number = context.user_data.get("phone_number")
-
-        if not selected_date or not phone_number:
-            await update.message.reply_text("Ошибка: не удалось найти данные о заказе.")
+async def handle_payment_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    selected_option = update.message.text
+    if selected_option == "Оплатить":
+        phone = context.user_data.get("phone_number")
+        if phone is None:
+            await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота!")
             return
-
-        try:
-            orders_df = pd.read_excel(ORDERS)
-        except FileNotFoundError:
-            await update.message.reply_text("Файл с заказами не найден.")
-            return
-
-        phone_number_clean = ''.join(filter(str.isdigit, phone_number))
-        orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
-
-        user_orders = orders_df[
-            (orders_df['Номер телефона'] == phone_number_clean) &
-            (orders_df['Дата'] == selected_date)
-        ]
-
-        if user_orders.empty:
+        success = move_orders_to_excel(phone)
+        if success:
+            await update.message.reply_text("Ваши заказы успешно оплачены и перенесены в историю.")
+        else:
             await update.message.reply_text("Нет заказов для оплаты.")
-            return
-
-        # Обновляем статус оплаты
-        orders_df.loc[
-            (orders_df['Номер телефона'] == phone_number_clean) & 
-            (orders_df['Дата'] == selected_date),
-            'Статус оплаты'
-        ] = 'Оплачено'
-        orders_df.to_excel(ORDERS, index=False)
-
-        message_text = "Ваши заказы успешно оплачены!\n\n"
-
-        # Кнопка "Следующий заказ"
-        keyboard = [
-            [InlineKeyboardButton("Сделать следующий заказ", callback_data=" ")],
-            [InlineKeyboardButton("Вернуться в главное меню", callback_data=" ")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(message_text, reply_markup=reply_markup)
-
-    except Exception as e:
-        logger.error(f"Ошибка при обработке оплаты: {e}")
-        await update.message.reply_text("Произошла ошибка при оплате. Пожалуйста, попробуйте снова.")
+        payment_keyboard = [["Назад"]]
+        await update.message.reply_text("Для возвращения в меню нажмите Назад", reply_markup=ReplyKeyboardMarkup(payment_keyboard, resize_keyboard=True))
+        return
+    elif selected_option == "Назад":
+        await show_menu(update, context)
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = context.user_data.get("phone_number")
+    if phone is None:
+        await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота!")
+        return
+
     try:
-        phone_number = context.user_data.get("phone_number")
-        if not phone_number:
-            await update.message.reply_text("Ваш номер телефона не зарегистрирован. Перезапустите бота.")
-            return
+        with open("orders.json", "r", encoding="utf-8") as f:
+            orders = json.load(f)
+    except FileNotFoundError:
+        await update.message.reply_text("Заказов пока нет.")
+        return
+    except json.JSONDecodeError:
+        await update.message.reply_text("Ошибка при чтении файла заказов.")
+        return
 
-        try:
-            orders_df = pd.read_excel(ORDERS)
-        except FileNotFoundError:
-            await update.message.reply_text("Заказов пока нет.")
-            return
+    user_orders = [order for order in orders if order.get("Номер телефона") == phone]
+    
 
-        phone_number_clean = ''.join(filter(str.isdigit, phone_number))
-        orders_df['Номер телефона'] = orders_df['Номер телефона'].astype(str).str.replace('[^0-9]', '', regex=True)
+    if not user_orders:
+        await update.message.reply_text("Ваша корзина пуста.")
+        return
 
-        user_orders = orders_df[
-            (orders_df['Номер телефона'] == phone_number_clean)
-        ]
+    from collections import defaultdict
 
-        if user_orders.empty:
-            await update.message.reply_text("У вас пока нет заказов.")
-            return
+    grouped_orders = defaultdict(lambda: {"Блюда": [], "Цена": 0, "День недели": ""})
 
-        # Группируем заказы по дате
-        orders_by_date = user_orders.groupby('Дата')
+    for order in user_orders:
+        date = order["Дата"]
+        grouped_orders[date]["Блюда"].append(order["Обед"])
+        price = int(order["Цена"].replace(" рублей", "")) if isinstance(order["Цена"], str) else order["Цена"]
+        grouped_orders[date]["Цена"] += price
+        grouped_orders[date]["День недели"] = order["День недели"]
 
-        cart_message = "Ваши заказы:\n\n"
-        for date, orders in orders_by_date:
-            cart_message += f"📅 *Заказы на {date}:*\n"
-            total_price = 0
-            for index, row in orders.iterrows():
-                cart_message += f"• {row['Обед']} - {row['Цена']} рублей\n"
-                total_price += row['Цена']
-            cart_message += f"*Итого к оплате: {total_price} рублей.*\n\n"
+    cart_message = "Ваша корзина:\n\n"
+    for date, details in grouped_orders.items():
+        cart_message += (
+            f" *Дата*: {date} ({details['День недели']})\n"
+            f" *Состав заказа*: {', '.join(details['Блюда'])}\n"
+            f" *Цена*: {details['Цена']} рублей\n\n"
+        )
 
-        keyboard = [
-            [InlineKeyboardButton("Оплатить", callback_data="pay_now")],
-            [InlineKeyboardButton("Сделать следующий заказ", callback_data="next_order")],
-            [InlineKeyboardButton("Вернуться в главное меню", callback_data="main_menu")]
-        ]
-        
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(cart_message, reply_markup=reply_markup, parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"Ошибка при отображении корзины: {e}")
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+    keyboard = [["Оплатить", "Назад", "Очистить корзину"]]
+    await update.message.reply_text(
+        cart_message,
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
 
 async def import_chat_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
